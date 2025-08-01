@@ -6,7 +6,23 @@ class OrderCreation(StatesGroup):
     enter_price = State()
     confirm_order = State()
 
-# Новое состояние для отклика
 class MakeOffer(StatesGroup):
     enter_message = State()
     confirm_offer = State()
+    
+# Новое состояние для отзыва
+class LeaveReview(StatesGroup):
+    enter_rating = State()
+    enter_text = State()
+
+class Withdrawal(StatesGroup):
+    enter_amount = State()
+    enter_address = State()
+    confirm_withdrawal = State()
+    
+class SupportChat(StatesGroup):
+    in_chat = State()
+
+class AdminBalanceChange(StatesGroup):
+    enter_amount = State()
+    confirm_change = State()
