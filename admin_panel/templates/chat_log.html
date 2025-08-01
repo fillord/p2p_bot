@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Лог чата - Заказ №{{ order.id }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+    <div class="container mx-auto p-4">
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            {% for msg in chat_log %}
+                <div class="border-b py-3">
+                    <p class="text-sm text-gray-500">
+                        <span class="font-semibold">
+                            {% if msg.sender_id == order.customer_id %}
+                                [Заказчик]
+                            {% else %}
+                                [Исполнитель]
+                            {% endif %}
+                        </span>
+                         - {{ msg.timestamp.strftime('%Y-%m-%d %H:%M') }}
+                    </p>
+                    {% if msg.content_type == 'text' %}
+                        <p class="text-gray-800 mt-1">{{ msg.text_content }}</p>
+                    {% elif msg.content_type == 'photo' %}
+                        <div class="mt-2">
+                            <img src="/{{ msg.file_path }}" alt="Фото" class="max-w-md rounded-md">
+                            {% if msg.text_content %}
+                                <p class="text-gray-600 text-sm mt-1">{{ msg.text_content }}</p>
+                            {% endif %}
+                        </div>
+                    {% elif msg.content_type == 'voice' %}
+                        <div class="mt-2">
+                            <audio controls src="/{{ msg.file_path }}"></audio>
+                        </div>
+                    {% endif %}
+                </div>
+            {% else %}
+                <p>Лог чата по этому заказу пуст.</p>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

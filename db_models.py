@@ -57,9 +57,12 @@ class ChatMessage(Base):
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     sender_id = Column(BigInteger, nullable=False)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    
     content_type = Column(String(20), nullable=False)
     text_content = Column(Text, nullable=True)
-    file_id = Column(String(255), nullable=True)
+    # Переименовали поле для хранения пути к файлу
+    file_path = Column(String(255), nullable=True)
+
     order = relationship("Order", back_populates="chat_messages")
 class Review(Base):
     __tablename__ = "reviews"

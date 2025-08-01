@@ -202,7 +202,6 @@ async def handle_start(message: types.Message, state: FSMContext, command: Comma
 
 @dp.message(Command("cancel"))
 @dp.message(F.text.casefold() == "отмена")
-@block_check
 async def cancel_handler(message: types.Message, state: FSMContext) -> None:
     current_state = await state.get_state()
     if current_state is None: return
@@ -614,18 +613,28 @@ async def process_balance_change_amount(message: types.Message, state: FSMContex
 
 # --- Логика отклика (FSM) ---
 @dp.callback_query(OrderCallback.filter(F.action == "offer"))
+@block_check # Добавляем проверку на блокировку
 async def handle_make_offer_start(callback: CallbackQuery, callback_data: OrderCallback, state: FSMContext):
     async with async_session() as session:
-        existing_offer = await session.execute(
+        # === ИСПРАВЛЕНИЕ: Проверяем, зарегистрирован ли пользователь ===
+        user_exists = await session.get(User, {"telegram_id": callback.from_user.id})
+        if not user_exists:
+            await callback.answer("Чтобы откликнуться, пожалуйста, сначала запустите бота командой /start", show_alert=True)
+            return
+        # ==========================================================
+
+        existing_offer = await session.scalar(
             select(Offer).where(Offer.order_id == callback_data.order_id, Offer.executor_id == callback.from_user.id)
         )
-        if existing_offer.scalar_one_or_none():
+        if existing_offer:
             await callback.answer("Вы уже откликались на этот заказ.", show_alert=True)
             return
+
     await state.set_state(MakeOffer.enter_message)
     await state.update_data(order_id=callback_data.order_id)
     await callback.answer()
-    await callback.message.answer("Введите сопроводительное сообщение для заказчика:")
+    await callback.message.answer("Введите сопроводительное сообщение для заказчика:\n\nДля отмены введите /cancel")
+
 # ... (остальной код FSM отклика без изменений)
 @dp.message(MakeOffer.enter_message)
 async def handle_offer_message(message: types.Message, state: FSMContext):
@@ -1222,15 +1231,12 @@ async def handle_document_rejection(message: types.Message, state: FSMContext):
 
 
 # --- ОБРАБОТЧИК ДЛЯ ЧАТА (ДОЛЖЕН БЫТЬ В САМОМ КОНЦЕ!) ---
-@dp.message(F.text | F.photo | F.voice) # Теперь ловим текст, фото и голосовые
+@dp.message(F.text | F.photo | F.voice)
 @block_check
 async def handle_chat_messages(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
-        # Если пользователь в процессе FSM, но отправил не текст, а медиа, игнорируем
         if message.content_type != types.ContentType.TEXT: return
-        # Проверяем, не является ли текст нажатием на кнопку меню
-        if message.text in ["📝 Создать заказ", "📂 Мои заказы", "💰 Мой баланс", "🆘 Поддержка"]: return
-        
+        if message.text in ["📝 Создать заказ", "📂 Мои заказы", "🔥 Лента заказов", "👤 Мой профиль", "🆘 Поддержка"]: return
         await message.answer("Пожалуйста, сначала завершите текущее действие или отмените его командой /cancel.")
         return
 
@@ -1241,44 +1247,42 @@ async def handle_chat_messages(message: types.Message, state: FSMContext):
         )
         if not active_order: return
 
-        # Определяем получателя
         if user_id == active_order.customer_id:
-            recipient_id = active_order.executor_id
-            sender_prefix = "<b>[Заказчик]:</b>"
+            recipient_id, sender_prefix = active_order.executor_id, "<b>[Заказчик]:</b>"
         else:
-            recipient_id = active_order.customer_id
-            sender_prefix = f"<b>[Исполнитель по заказу №{active_order.id}]:</b>"
+            recipient_id, sender_prefix = active_order.customer_id, f"<b>[Исполнитель по заказу №{active_order.id}]:</b>"
         
-        content_type = message.content_type
-        text_content = None
-        file_id = None
+        content_type = message.content_type.value
+        text_content, file_path_to_save = None, None
         
-        # Готовим данные для сохранения в БД и отправки
-        if content_type == types.ContentType.TEXT:
+        # --- НОВАЯ ЛОГИКА СКАЧИВАНИЯ ---
+        if message.text:
             text_content = message.text
-        elif content_type == types.ContentType.PHOTO:
-            file_id = message.photo[-1].file_id # Берем самое большое разрешение
-            text_content = message.caption # Сохраняем подпись к фото
-        elif content_type == types.ContentType.VOICE:
+        elif message.photo:
+            file_id = message.photo[-1].file_id
+            text_content = message.caption
+            file_info = await bot.get_file(file_id)
+            file_ext = file_info.file_path.split('.')[-1]
+            file_path_to_save = f"media/{file_info.file_unique_id}.{file_ext}"
+            await bot.download_file(file_info.file_path, file_path_to_save)
+        elif message.voice:
             file_id = message.voice.file_id
+            file_info = await bot.get_file(file_id)
+            file_ext = file_info.file_path.split('.')[-1]
+            file_path_to_save = f"media/{file_info.file_unique_id}.{file_ext}"
+            await bot.download_file(file_info.file_path, file_path_to_save)
+        # --------------------------------
 
-        # 1. Логируем сообщение в базу
-        new_chat_message = ChatMessage(
-            order_id=active_order.id, sender_id=user_id,
-            content_type=content_type, text_content=text_content, file_id=file_id
-        )
-        session.add(new_chat_message)
+        session.add(ChatMessage(order_id=active_order.id, sender_id=user_id, content_type=content_type, text_content=text_content, file_path=file_path_to_save))
         await session.commit()
         
-        # 2. Пересылаем сообщение получателю
         try:
-            if content_type == types.ContentType.TEXT:
+            if content_type == 'text':
                 await bot.send_message(recipient_id, f"{sender_prefix}\n{text_content}")
-            elif content_type == types.ContentType.PHOTO:
+            elif content_type == 'photo':
                 await bot.send_photo(recipient_id, file_id, caption=f"{sender_prefix}\n{text_content or ''}")
-            elif content_type == types.ContentType.VOICE:
+            elif content_type == 'voice':
                 await bot.send_voice(recipient_id, file_id, caption=sender_prefix)
-
         except Exception as e:
             logging.error(f"Не удалось переслать сообщение от {user_id} к {recipient_id}: {e}")
             await message.answer("❌ Не удалось доставить сообщение.")
