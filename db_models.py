@@ -4,8 +4,16 @@ from sqlalchemy import (
     BigInteger, ForeignKey, Text, Boolean
 )
 from sqlalchemy.orm import declarative_base, relationship
+from datetime import UTC
 
 Base = declarative_base()
+
+class Category(Base):
+    __tablename__ = "categories"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    
+    orders = relationship("Order", back_populates="category")
 
 class User(Base):
     __tablename__ = "users"
@@ -16,18 +24,18 @@ class User(Base):
     wallet_address = Column(String(64), nullable=True, unique=True)
     rating = Column(Numeric(3, 2), default=5.00)
     reviews_count = Column(Integer, default=0)
-    registration_date = Column(DateTime, default=datetime.datetime.utcnow)
+    registration_date = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(UTC))
     is_blocked = Column(Boolean, default=False, nullable=False)
-    
+    vip_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     created_orders = relationship("Order", foreign_keys="Order.customer_id", back_populates="customer")
     executed_orders = relationship("Order", foreign_keys="Order.executor_id", back_populates="executor")
     offers = relationship("Offer", back_populates="executor")
     reviews_written = relationship("Review", foreign_keys="Review.reviewer_id", back_populates="reviewer")
     reviews_received = relationship("Review", foreign_keys="Review.reviewee_id", back_populates="reviewee")
-    # Эта связь теперь будет работать
     financial_transactions = relationship("FinancialTransaction", back_populates="user")
 
-# ... (Классы Order, Offer, ChatMessage, Review, Transaction остаются без изменений)
+
 class Order(Base):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True)
@@ -37,12 +45,19 @@ class Order(Base):
     status = Column(String(20), default="open", nullable=False)
     customer_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     executor_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=True)
-    creation_date = Column(DateTime, default=datetime.datetime.utcnow)
+    creation_date = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(UTC))
+    
+    # ИЗМЕНЕНИЕ: Добавляем связь с категорией
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    category = relationship("Category", back_populates="orders")
+    
     customer = relationship("User", foreign_keys=[customer_id], back_populates="created_orders")
     executor = relationship("User", foreign_keys=[executor_id], back_populates="executed_orders")
     offers = relationship("Offer", back_populates="order", cascade="all, delete-orphan")
     chat_messages = relationship("ChatMessage", back_populates="order", cascade="all, delete-orphan")
     reviews = relationship("Review", back_populates="order", cascade="all, delete-orphan")
+
+
 class Offer(Base):
     __tablename__ = "offers"
     id = Column(Integer, primary_key=True)
@@ -51,19 +66,20 @@ class Offer(Base):
     message = Column(Text, nullable=True)
     order = relationship("Order", back_populates="offers")
     executor = relationship("User", back_populates="offers")
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
     id = Column(Integer, primary_key=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     sender_id = Column(BigInteger, nullable=False)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(UTC))
     content_type = Column(String(20), nullable=False)
     text_content = Column(Text, nullable=True)
-    # Переименовали поле для хранения пути к файлу
     file_path = Column(String(255), nullable=True)
-
     order = relationship("Order", back_populates="chat_messages")
+
+
 class Review(Base):
     __tablename__ = "reviews"
     id = Column(Integer, primary_key=True)
@@ -75,14 +91,19 @@ class Review(Base):
     order = relationship("Order", back_populates="reviews")
     reviewer = relationship("User", foreign_keys=[reviewer_id], back_populates="reviews_written")
     reviewee = relationship("User", foreign_keys=[reviewee_id], back_populates="reviews_received")
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True)
     txid = Column(String(128), unique=True, nullable=False, index=True)
+
 class Setting(Base):
     __tablename__ = "settings"
     key = Column(String(50), primary_key=True)
     value = Column(String(255), nullable=False)
+
+
 class FinancialTransaction(Base):
     __tablename__ = "financial_transactions"
     id = Column(Integer, primary_key=True)
@@ -90,7 +111,5 @@ class FinancialTransaction(Base):
     type = Column(String(50), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
     order_id = Column(Integer, nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-
-    # === ИСПРАВЛЕНИЕ: ДОБАВЛЯЕМ ОБРАТНУЮ СВЯЗЬ ===
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(UTC))
     user = relationship("User", back_populates="financial_transactions")

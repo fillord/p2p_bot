@@ -22,11 +22,14 @@ top_up_btn = InlineKeyboardButton(text="➕ Пополнить", callback_data="
 withdraw_btn = InlineKeyboardButton(text="➖ Вывести", callback_data="withdraw")
 deals_history_btn = InlineKeyboardButton(text="📜 История сделок", callback_data="deals_history")
 finance_history_btn = InlineKeyboardButton(text="💸 История баланса", callback_data="finance_history")
+# Новая кнопка
+buy_vip_btn = InlineKeyboardButton(text="👑 Купить VIP", callback_data="buy_vip")
+
 
 profile_keyboard = InlineKeyboardMarkup(
     inline_keyboard=[
         [top_up_btn, withdraw_btn],
-        [deals_history_btn],
-        [finance_history_btn]
+        [deals_history_btn, finance_history_btn],
+        [buy_vip_btn] # Добавляем кнопку
     ]
 )

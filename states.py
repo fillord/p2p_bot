@@ -1,6 +1,7 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class OrderCreation(StatesGroup):
+    enter_category = State()
     enter_title = State()
     enter_description = State()
     enter_price = State()

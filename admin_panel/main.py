@@ -9,18 +9,18 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from passlib.context import CryptContext
-from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
+from sqlalchemy import select, func
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from fastapi.staticfiles import StaticFiles
 
+
 load_dotenv()
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from db_models import User, Order, FinancialTransaction, ChatMessage, Setting
+from db_models import User, Order, FinancialTransaction, ChatMessage, Setting, Category
 
 # --- Настройка ---
 DB_URL = f"postgresql+asyncpg://{os.getenv('DB_USER')}:{os.getenv('DB_PASS')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
@@ -58,13 +58,19 @@ async def read_root(request: Request):
         users_result = await session.execute(select(User).order_by(User.registration_date.desc()))
         users = users_result.scalars().all()
         orders_result = await session.execute(
-            select(Order).options(joinedload(Order.customer), joinedload(Order.executor)).order_by(Order.creation_date.desc())
+            select(Order).options(
+                joinedload(Order.customer), 
+                joinedload(Order.executor),
+                joinedload(Order.category) # <--- ДОБАВЛЕНО
+            ).order_by(Order.creation_date.desc())
         )
         orders = orders_result.scalars().unique().all()
         
         # === ИЗМЕНЕНИЕ: Получаем текущую комиссию ===
         commission_setting = await session.get(Setting, "commission_percent")
         current_commission = commission_setting.value if commission_setting else "0"
+        categories_result = await session.execute(select(Category).order_by(Category.name))
+        categories = categories_result.scalars().all()
 
     return templates.TemplateResponse(
         "index.html",
@@ -72,9 +78,29 @@ async def read_root(request: Request):
             "request": request,
             "users": users,
             "orders": orders,
-            "commission_percent": current_commission
+            "commission_percent": current_commission,
+            "categories": categories
         }
     )
+
+@app.post("/categories/add", dependencies=[Depends(verify_credentials)])
+async def add_category(category_name: str = Form(...)):
+    if category_name and len(category_name) > 2:
+        async with async_session() as session:
+            existing_category = await session.scalar(select(Category).where(func.lower(Category.name) == category_name.lower()))
+            if not existing_category:
+                session.add(Category(name=category_name))
+                await session.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/categories/{category_id}/delete", dependencies=[Depends(verify_credentials)])
+async def delete_category(category_id: int):
+    async with async_session() as session:
+        category = await session.get(Category, category_id)
+        if category:
+            await session.delete(category)
+            await session.commit()
+    return RedirectResponse(url="/", status_code=303)
 
 @app.post("/settings/commission", dependencies=[Depends(verify_credentials)])
 async def update_commission(percent: Decimal = Form(...)):
