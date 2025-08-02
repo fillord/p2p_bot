@@ -1,7 +1,6 @@
 import sys
 from passlib.context import CryptContext
 
-# Спрашиваем пароль и выводим его хеш
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 if len(sys.argv) < 2:
     print("Использование: python3 hash_password.py 'ваш_пароль'")

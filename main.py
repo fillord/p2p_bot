@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-# --- ШАГ 2: Теперь импортируем все остальное ---
 import os
 import asyncio
 import logging
@@ -33,10 +32,8 @@ from keyboards import main_menu_keyboard, profile_keyboard # Исправлен 
 from crypto_logic import generate_new_wallet, check_new_transactions, create_payout
 from states import OrderCreation, MakeOffer, LeaveReview, Withdrawal, AdminBalanceChange, SupportChat
 
-# Настраиваем логирование и константы
 logging.basicConfig(level=logging.INFO)
 PAGE_SIZE = 3
-# --- Настройка базы данных и ID ---
 DB_URL = f"postgresql+asyncpg://{os.getenv('DB_USER')}:{os.getenv('DB_PASS')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
@@ -56,7 +53,6 @@ VIP_PLANS = {
     90: Decimal("12.00"), # 90 дней за 12 USDT
 }
 
-# --- Фабрики колбэков ---
 class OrderCallback(CallbackData, prefix="order"):
     action: str
     order_id: int
@@ -80,7 +76,6 @@ class CategoryCallback(CallbackData, prefix="category"):
     action: str # 'select'
     category_id: int
 
-# --- Декоратор для проверки прав администратора ---
 def admin_only(func):
     @wraps(func)
     async def wrapper(message: types.Message, *args, **kwargs):
@@ -88,7 +83,6 @@ def admin_only(func):
             return await message.answer("Эта команда доступна только администратору.")
         return await func(message, *args, **kwargs)
     return wrapper
-
 
 def block_check(func):
     @wraps(func)
@@ -117,8 +111,6 @@ async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-
-# --- Фоновый процесс проверки платежей ---
 async def check_payments():
     async with async_session() as session:
         users_with_wallets = await session.execute(select(User).where(User.wallet_address.isnot(None)))
@@ -187,7 +179,7 @@ async def show_user_profile(message_or_callback: types.Message | types.CallbackQ
             [types.InlineKeyboardButton(text="➕ Начислить", callback_data=AdminCallback(action="credit", user_id=user.telegram_id).pack()),
              types.InlineKeyboardButton(text="➖ Списать", callback_data=AdminCallback(action="debit", user_id=user.telegram_id).pack())]
         ])
-        # Отвечаем в зависимости от того, откуда вызвана функция
+
         if isinstance(message_or_callback, types.CallbackQuery):
              await message_or_callback.message.answer(user_info_text, reply_markup=admin_keyboard)
         else:
@@ -197,7 +189,6 @@ async def show_user_profile(message_or_callback: types.Message | types.CallbackQ
 async def handle_start(message: types.Message, state: FSMContext, command: CommandObject = None):
     await state.clear()
     
-    # Обработка deep-link
     if command and command.args and command.args.startswith("offer_"):
         async with async_session() as session:
             user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
@@ -213,7 +204,6 @@ async def handle_start(message: types.Message, state: FSMContext, command: Comma
                 if offers_count >= 3:
                     await message.answer("❌ Вы достигли лимита на отклики (10).")
                     return
-
         try:
             order_id = int(command.args.split("_")[1])
             await state.set_state(MakeOffer.enter_message)
@@ -251,13 +241,11 @@ async def get_stats(message: types.Message):
     async with async_session() as session:
         total_users = await session.scalar(select(func.count(User.id)))
         
-        # Считаем заказы по статусам
         open_orders = await session.scalar(select(func.count(Order.id)).where(Order.status == "open"))
         in_progress_orders = await session.scalar(select(func.count(Order.id)).where(Order.status == "in_progress"))
         dispute_orders = await session.scalar(select(func.count(Order.id)).where(Order.status == "dispute"))
         completed_orders = await session.scalar(select(func.count(Order.id)).where(Order.status == "completed"))
         
-        # Считаем сумму, зарезервированную в сделках
         hold_amount_res = await session.scalar(select(func.sum(Order.price)).where(Order.status == "in_progress"))
         hold_amount = hold_amount_res or Decimal("0.00")
 
@@ -274,17 +262,11 @@ async def get_stats(message: types.Message):
         )
         await message.answer(stats_text)
 
-
-
-
-# --- Логика создания заказа (FSM) ---
 @dp.message(F.text == "📝 Создать заказ")
 @block_check
 async def order_creation_start(message: types.Message, state: FSMContext):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
-        
-        # --- ВОЗВРАЩАЕМ ПРОВЕРКУ ЛИМИТА НА СОЗДАНИЕ ЗАКАЗОВ ---
         is_vip = user.vip_expires_at and user.vip_expires_at > datetime.now(UTC)
         if not is_vip:
             orders_count = await session.scalar(
@@ -295,15 +277,12 @@ async def order_creation_start(message: types.Message, state: FSMContext):
                     "❌ Вы достигли лимита на создание заказов (10).\n"
                     "Чтобы снять ограничения, приобретите VIP-статус."
                 )
-        # =======================================================
 
-        # Получаем категории из базы
         categories_result = await session.execute(select(Category).order_by(Category.name))
         categories = categories_result.scalars().all()
         if not categories:
             return await message.answer("Категории еще не созданы. Администратор скоро их добавит.")
 
-    # Создаем клавиатуру с категориями
     buttons = [
         [types.InlineKeyboardButton(text=cat.name, callback_data=CategoryCallback(action="select", category_id=cat.id).pack())]
         for cat in categories
@@ -319,13 +298,13 @@ async def enter_category(callback: CallbackQuery, callback_data: CategoryCallbac
     await state.set_state(OrderCreation.enter_title)
     await callback.message.edit_text("Категория выбрана. Теперь введите название вашего заказа.\n\nДля отмены введите /cancel")
 
-
 @dp.message(OrderCreation.enter_title)
 @block_check
 async def enter_title(message: types.Message, state: FSMContext):
     await state.update_data(title=message.text)
     await state.set_state(OrderCreation.enter_description)
     await message.answer("Отлично! Теперь введите подробное описание задачи.")
+
 @dp.message(OrderCreation.enter_description)
 @block_check
 async def enter_description(message: types.Message, state: FSMContext):
@@ -349,10 +328,8 @@ async def enter_price(message: types.Message, state: FSMContext):
     order_data = await state.get_data()
     
     async with async_session() as session:
-        # Получаем имя категории для отображения
         category = await session.get(Category, order_data['category_id'])
         category_name = category.name if category else "Не выбрана"
-        # Сохраняем имя в состояние для следующего шага
         await state.update_data(category_name=category_name)
 
         user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
@@ -361,7 +338,6 @@ async def enter_price(message: types.Message, state: FSMContext):
             await message.answer(f"На вашем балансе недостаточно средств ({balance:.2f} USDT). Пожалуйста, пополните баланс и попробуйте снова.", reply_markup=main_menu_keyboard)
             await state.clear()
             return
-
     text = (
         f"<b>Пожалуйста, проверьте данные вашего заказа:</b>\n\n"
         f"<b>Категория:</b> {category_name}\n"
@@ -403,7 +379,6 @@ async def confirm_order_creation(callback: CallbackQuery, state: FSMContext):
             session.add(FinancialTransaction(user_id=user.telegram_id, type='order_payment', amount=-price, order_id=new_order.id))
         
         await session.commit()
-        
         await callback.message.edit_text(f"✅ Ваш заказ №{new_order.id} успешно создан!", reply_markup=None)
         
         try:
@@ -417,7 +392,6 @@ async def confirm_order_creation(callback: CallbackQuery, state: FSMContext):
                 )
             ]])
             
-            # Берем имя категории из сохраненного состояния
             category_name = order_data.get('category_name', 'Без категории')
             
             order_text = (
@@ -431,9 +405,7 @@ async def confirm_order_creation(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             logging.error(f"Не удалось отправить заказ {new_order.id} в канал: {e}")
             await callback.message.answer("Не удалось опубликовать заказ в канале. Обратитесь к администратору.")
-            
     await state.clear()
-
     
 @dp.callback_query(OrderCreation.confirm_order, F.data == "order_cancel")
 async def cancel_order_creation(callback: CallbackQuery, state: FSMContext):
@@ -441,7 +413,6 @@ async def cancel_order_creation(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("Создание заказа отменено.", reply_markup=None)
 
-# --- ОБРАБОТЧИКИ КОНКРЕТНЫХ КНОПОК И КОМАНД ---
 @dp.message(F.text == "🔥 Лента заказов")
 @block_check
 async def handle_order_feed(message: types.Message):
@@ -490,14 +461,12 @@ async def handle_order_feed_page(callback: CallbackQuery, callback_data: Paginat
         await callback.message.edit_text(text, reply_markup=keyboard)
         await callback.answer()
 
-
 @dp.message(F.text == "📂 Мои заказы")
 @block_check
 async def handle_my_orders(message: types.Message):
     async with async_session() as session:
         user_id = message.from_user.id
         
-        # === ИСПРАВЛЕНИЕ: Добавляем joinedload(Order.category) ===
         created_orders_stmt = (
             select(Order)
             .where(Order.customer_id == user_id)
@@ -515,7 +484,6 @@ async def handle_my_orders(message: types.Message):
         )
         executing_orders_res = await session.execute(executing_orders_stmt)
         executing_orders = executing_orders_res.scalars().unique().all()
-        # =======================================================
 
         if not created_orders and not executing_orders:
             return await message.answer("У вас пока нет активных заказов. \nСоздайте свой или найдите в ленте /feed")
@@ -548,13 +516,11 @@ async def view_specific_order(message: types.Message, command: CommandObject):
     user_id = message.from_user.id
     
     async with async_session() as session:
-        # Подгружаем связанные данные о заказчике сразу
         order = await session.get(Order, order_id, options=[joinedload(Order.customer), joinedload(Order.category)]) # ДОБАВЛЕНО
         
         if not order:
             return await message.answer("Заказ не найден.")
 
-        # Новая логика проверки доступа
         is_participant = order.customer_id == user_id or order.executor_id == user_id
         if order.status != 'open' and not is_participant:
             return await message.answer("У вас нет доступа к этому заказу, так как он уже в работе или завершен.")
@@ -572,7 +538,6 @@ async def view_specific_order(message: types.Message, command: CommandObject):
         )
         
         keyboard = None
-        # Определяем, какие кнопки показать
         if order.status == "open":
             if order.customer_id == user_id: # Если это наш заказ
                 offers_count = await session.scalar(select(func.count(Offer.id)).where(Offer.order_id == order.id))
@@ -580,14 +545,13 @@ async def view_specific_order(message: types.Message, command: CommandObject):
                     text += f"\n<b>Откликов:</b> {offers_count}"
                     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(
                         text="Посмотреть отклики", callback_data=OrderCallback(action="view", order_id=order.id).pack())]])
-            else: # Если это чужой открытый заказ
+            else:
                  keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(
                     text="🚀 Откликнуться", callback_data=OrderCallback(action="offer", order_id=order.id).pack())]])
 
         elif order.status == "in_progress" and order.executor_id == user_id:
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(
                 text="✅ Сдать работу", callback_data=OrderCallback(action="submit_work", order_id=order.id).pack())]])
-        
         await message.answer(text, reply_markup=keyboard)
 
 @dp.callback_query(F.data == "buy_vip")
@@ -607,7 +571,6 @@ async def buy_vip_handler(callback: CallbackQuery):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     await callback.message.answer("Выберите план подписки:", reply_markup=keyboard)
 
-# НОВЫЙ ОБРАБОТЧИК ПОКУПКИ КОНКРЕТНОГО ПЛАНА
 @dp.callback_query(VIPCallback.filter(F.action == "buy"))
 @block_check
 async def process_vip_buy(callback: CallbackQuery, callback_data: VIPCallback):
@@ -624,7 +587,6 @@ async def process_vip_buy(callback: CallbackQuery, callback_data: VIPCallback):
             await callback.answer("На вашем балансе недостаточно средств.", show_alert=True)
             return
 
-        # Списываем деньги и обновляем VIP
         user.balance -= price
         session.add(FinancialTransaction(user_id=user.telegram_id, type='vip_payment', amount=-price))
         
@@ -649,7 +611,6 @@ async def handle_profile(message: types.Message):
         if not user:
             return await message.answer("Произошла ошибка. Пожалуйста, нажмите /start для регистрации.")
         
-        # Проверяем VIP-статус
         vip_status = "Активен ✅" if user.vip_expires_at and user.vip_expires_at > datetime.now(UTC) else "Неактивен ❌"
         
         profile_text = (
@@ -663,7 +624,6 @@ async def handle_profile(message: types.Message):
             
         await message.answer(profile_text, reply_markup=profile_keyboard)
 
-# --- НОВАЯ АДМИН-КОМАНДА: ВЫДАЧА VIP ---
 @dp.message(Command("grant_vip"))
 @admin_only
 async def grant_vip(message: types.Message, command: CommandObject):
@@ -682,7 +642,6 @@ async def grant_vip(message: types.Message, command: CommandObject):
         if not user:
             return await message.answer(f"Пользователь с ID {user_id} не найден.")
             
-        # Устанавливаем или продлеваем VIP
         current_expiry = user.vip_expires_at or datetime.now(UTC)
         if current_expiry < datetime.now(UTC):
             current_expiry = datetime.now(UTC)
@@ -698,8 +657,6 @@ async def grant_vip(message: types.Message, command: CommandObject):
         except Exception as e:
             logging.error(f"Не удалось уведомить пользователя {user_id} о VIP-статусе: {e}")
 
-
-# === ИЗМЕНЕНИЕ 2: Упрощаем команду /user ===
 @dp.message(Command("user"))
 @admin_only
 async def get_user_info_command(message: types.Message, command: CommandObject):
@@ -716,11 +673,8 @@ async def get_user_info_command(message: types.Message, command: CommandObject):
         if not user:
             return await message.answer(f"Пользователь '{user_identifier}' не найден.")
         
-        # Вызываем нашу новую функцию для отображения
         await show_user_profile(message, user.telegram_id)
 
-
-# === ИЗМЕНЕНИЕ 3: Исправляем обработчик блокировки ===
 @dp.callback_query(AdminCallback.filter(F.action.in_(["block", "unblock"])))
 async def handle_block_user(callback: CallbackQuery, callback_data: AdminCallback):
     user_id_to_change = callback_data.user_id
@@ -744,7 +698,6 @@ async def handle_block_user(callback: CallbackQuery, callback_data: AdminCallbac
             
         await session.commit()
     
-    # Удаляем старое сообщение и показываем обновленный профиль
     await callback.message.delete()
     await show_user_profile(callback.message, user_id_to_change)
 
@@ -755,7 +708,7 @@ async def start_balance_change(callback: CallbackQuery, callback_data: AdminCall
     await state.update_data(
         user_id=callback_data.user_id,
         action=callback_data.action,
-        message_id_to_delete=callback.message.message_id # Сохраняем ID для удаления
+        message_id_to_delete=callback.message.message_id
     )
     action_text = "начислить" if callback_data.action == "credit" else "списать"
     await callback.answer()
@@ -785,7 +738,7 @@ async def process_balance_change_amount(message: types.Message, state: FSMContex
             session.add(FinancialTransaction(user_id=user_id, type='admin_credit', amount=amount))
         
             final_text = f"✅ Успешно начислено {amount:.2f} USDT пользователю {user_id}."
-        else: # debit
+        else: 
             if user.balance < amount:
                 await message.answer(f"Недостаточно средств. Баланс пользователя: {user.balance:.2f} USDT.")
                 return await state.clear()
@@ -798,19 +751,13 @@ async def process_balance_change_amount(message: types.Message, state: FSMContex
     
     await message.answer(final_text)
     
-    # Удаляем старую карточку пользователя и сообщение с запросом суммы
     await bot.delete_message(message.chat.id, data.get("message_id_to_delete"))
     await message.delete()
     
-    # Показываем обновленную карточку
     new_message = await message.answer(f"/user {user_id}")
     await get_user_info(new_message, CommandObject(command=Command(commands=['user']), args=str(user_id)))
     await state.clear()
 
-
-
-
-# --- Логика отклика (FSM) ---
 @dp.callback_query(OrderCallback.filter(F.action == "offer"))
 @block_check
 async def handle_make_offer_start(callback: CallbackQuery, callback_data: OrderCallback, state: FSMContext):
@@ -820,7 +767,6 @@ async def handle_make_offer_start(callback: CallbackQuery, callback_data: OrderC
             await callback.answer("Чтобы откликнуться, пожалуйста, сначала запустите бота командой /start", show_alert=True)
             return
 
-        # --- ИЗМЕНЕНИЕ: Проверка лимита на отклики ---
         is_vip = user.vip_expires_at and user.vip_expires_at > datetime.now(UTC)
         if not is_vip:
             offers_count = await session.scalar(
@@ -832,7 +778,6 @@ async def handle_make_offer_start(callback: CallbackQuery, callback_data: OrderC
                     show_alert=True
                 )
                 return
-        # =======================================================
 
         existing_offer = await session.scalar(
             select(Offer).where(Offer.order_id == callback_data.order_id, Offer.executor_id == callback.from_user.id)
@@ -846,8 +791,6 @@ async def handle_make_offer_start(callback: CallbackQuery, callback_data: OrderC
     await callback.answer()
     await callback.message.answer("Введите сопроводительное сообщение для заказчика:\n\nДля отмены введите /cancel")
 
-
-# ... (остальной код FSM отклика без изменений)
 @dp.message(MakeOffer.enter_message)
 async def handle_offer_message(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -867,14 +810,12 @@ async def handle_offer_message(message: types.Message, state: FSMContext):
             await message.answer("❌ Произошла ошибка. Заказ не найден.")
     await state.clear()
 
-
-# --- Логика вывода средств (FSM) ---
 @dp.callback_query(F.data == "withdraw")
 async def start_withdrawal(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(Withdrawal.enter_amount)
     await callback.message.answer("Введите сумму для вывода в USDT.\n\nДля отмены введите /cancel")
-# ... (остальной код FSM вывода без изменений)
+    
 @dp.message(Withdrawal.enter_amount)
 async def enter_withdrawal_amount(message: types.Message, state: FSMContext):
     try:
@@ -893,6 +834,7 @@ async def enter_withdrawal_amount(message: types.Message, state: FSMContext):
     await state.update_data(amount=amount)
     await state.set_state(Withdrawal.enter_address)
     await message.answer("Теперь введите ваш TRC-20 адрес для получения USDT.")
+
 @dp.message(Withdrawal.enter_address)
 async def enter_withdrawal_address(message: types.Message, state: FSMContext):
     address = message.text
@@ -907,6 +849,7 @@ async def enter_withdrawal_address(message: types.Message, state: FSMContext):
     confirm_keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_withdrawal_yes")], [types.InlineKeyboardButton(text="❌ Отменить", callback_data="confirm_withdrawal_no")]])
     await state.set_state(Withdrawal.confirm_withdrawal)
     await message.answer(text, reply_markup=confirm_keyboard)
+
 @dp.callback_query(Withdrawal.confirm_withdrawal, F.data == "confirm_withdrawal_yes")
 async def confirm_withdrawal(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("⏳ Обрабатываем ваш запрос на вывод...")
@@ -927,14 +870,13 @@ async def confirm_withdrawal(callback: CallbackQuery, state: FSMContext):
     else:
         await callback.message.edit_text(f"❌ Не удалось создать запрос на вывод.\nПричина: {result}\n\nПопробуйте позже или обратитесь в поддержку.")
     await state.clear()
+
 @dp.callback_query(Withdrawal.confirm_withdrawal, F.data == "confirm_withdrawal_no")
 async def cancel_withdrawal(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     await callback.message.edit_text("Вывод средств отменен.")
 
-
-# --- Логика отзывов (FSM) ---
 @dp.callback_query(ReviewCallback.filter(F.action == "start"))
 async def start_review(callback: CallbackQuery, callback_data: ReviewCallback, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -944,12 +886,14 @@ async def start_review(callback: CallbackQuery, callback_data: ReviewCallback, s
         [types.InlineKeyboardButton(text=f"{'⭐'*i}", callback_data=f"rating_{i}") for i in range(1, 6)]
     ])
     await callback.message.answer("Пожалуйста, оцените вашу сделку по 5-звездочной шкале:", reply_markup=rating_kb)
+
 @dp.callback_query(LeaveReview.enter_rating, F.data.startswith("rating_"))
 async def enter_rating(callback: CallbackQuery, state: FSMContext):
     rating = int(callback.data.split("_")[1])
     await state.update_data(rating=rating)
     await state.set_state(LeaveReview.enter_text)
     await callback.message.edit_text("Спасибо за оценку! Теперь, пожалуйста, напишите текстовый отзыв.")
+
 @dp.message(LeaveReview.enter_text)
 async def enter_review_text(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -977,9 +921,6 @@ async def enter_review_text(message: types.Message, state: FSMContext):
     await message.answer("✅ Спасибо, ваш отзыв принят!")
     await state.clear()
 
-
-
-
 @dp.message(Command("profile"))
 @block_check
 async def get_public_profile(message: types.Message, command: CommandObject):
@@ -994,7 +935,6 @@ async def get_public_profile(message: types.Message, command: CommandObject):
         if not user:
             return await message.answer("Пользователь не найден.")
 
-        # Считаем завершенные сделки
         completed_deals = await session.scalar(
             select(func.count(Order.id)).where(
                 or_(Order.customer_id == user.telegram_id, Order.executor_id == user.telegram_id),
@@ -1010,7 +950,6 @@ async def get_public_profile(message: types.Message, command: CommandObject):
         )
         await message.answer(profile_text)
         
-        # Показываем последние 3 отзыва
         reviews = await session.scalars(
             select(Review).where(Review.reviewee_id == user.telegram_id).order_by(Review.id.desc()).limit(3)
         )
@@ -1085,12 +1024,11 @@ async def start_support_chat(message: types.Message, state: FSMContext):
         "Вы вошли в чат с поддержкой. Напишите ваше сообщение, и администратор скоро ответит.\n\n"
         "Чтобы выйти из чата, отправьте команду /cancel."
     )
-# Шаг 2: Пользователь отправляет сообщение в поддержку
+
 @dp.message(SupportChat.in_chat, F.text)
 async def forward_to_admin(message: types.Message, state: FSMContext):
     user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.from_user.id}"
     
-    # Пересылаем сообщение админу
     await bot.send_message(
         ADMIN_ID,
         f"<b>Новое сообщение в поддержку от {user_info}</b> (ID: `{message.from_user.id}`)\n\n"
@@ -1098,13 +1036,10 @@ async def forward_to_admin(message: types.Message, state: FSMContext):
     )
     await message.answer("Ваше сообщение отправлено администратору.")
 
-# Шаг 3: Админ отвечает на сообщение пользователя (используя функцию "Ответить")
 @dp.message(F.reply_to_message, lambda msg: msg.from_user.id == ADMIN_ID)
 async def forward_to_user(message: types.Message):
-    # Получаем ID пользователя из текста оригинального сообщения
     try:
         replied_message_text = message.reply_to_message.text
-        # Ищем ID пользователя в строке "(ID: `123456789`)"
         user_id_str = replied_message_text.split("(ID: `")[1].split("`)")[0]
         user_id = int(user_id_str)
 
@@ -1212,20 +1147,15 @@ async def accept_work(callback: CallbackQuery, callback_data: OrderCallback):
         if not order or order.customer_id != callback.from_user.id or order.status != "pending_approval":
             await callback.answer("Действие не может быть выполнено.", show_alert=True)
             return
-        
-        # --- Расчет и удержание комиссии ---
         executor = order.executor
         payout_amount = order.price
         commission_amount = Decimal("0.00")
-        
-        # Получаем комиссию из настроек
         commission_setting = await session.get(Setting, "commission_percent")
         if commission_setting and order.price > 0:
             commission_percent = Decimal(commission_setting.value)
             commission_amount = (order.price * commission_percent) / 100
             payout_amount = order.price - commission_amount
 
-        # Зачисляем деньги и логируем транзакцию
         if payout_amount > 0:
             executor.balance += payout_amount
             session.add(FinancialTransaction(user_id=executor.telegram_id, type='order_reward', amount=payout_amount, order_id=order.id))
@@ -1235,12 +1165,10 @@ async def accept_work(callback: CallbackQuery, callback_data: OrderCallback):
         
         await callback.message.edit_text(f"✅ Вы успешно приняли работу по заказу №{order.id}! Сделка завершена.")
         
-        # Уведомляем исполнителя с учетом комиссии
         payout_info = f"{payout_amount:.2f} USDT зачислены на ваш баланс."
         if commission_amount > 0:
             payout_info += f" (удержана комиссия {commission_amount:.2f} USDT)"
 
-        # Создаем клавиатуры для отзыва
         customer_review_kb = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Оставить отзыв исполнителю", 
                                        callback_data=ReviewCallback(action="start", order_id=order.id, reviewee_id=order.executor_id).pack())
@@ -1250,7 +1178,6 @@ async def accept_work(callback: CallbackQuery, callback_data: OrderCallback):
                                        callback_data=ReviewCallback(action="start", order_id=order.id, reviewee_id=order.customer_id).pack())
         ]])
 
-        # Отправляем уведомления и предложение оставить отзыв
         await bot.send_message(
             order.executor_id,
             f"🎉 Заказчик принял работу по заказу №{order.id} ('{order.title}').\n{payout_info}",
@@ -1258,12 +1185,10 @@ async def accept_work(callback: CallbackQuery, callback_data: OrderCallback):
         )
         await callback.message.answer("Спасибо за использование сервиса! Пожалуйста, оставьте отзыв о работе исполнителя.", reply_markup=customer_review_kb)
         
-# --- ИЗМЕНЕНИЕ: РЕАЛИЗУЕМ ЛОГИКУ КНОПКИ "ОТКРЫТЬ СПОР" ---
 @dp.callback_query(OrderCallback.filter(F.action == "dispute"))
 async def open_dispute(callback: CallbackQuery, callback_data: OrderCallback):
     async with async_session() as session:
         order = await session.get(Order, callback_data.order_id)
-        # ... (проверки заказа без изменений)
         if not order or order.customer_id != callback.from_user.id:
             await callback.answer("Это не ваш заказ.", show_alert=True)
             return
@@ -1276,7 +1201,6 @@ async def open_dispute(callback: CallbackQuery, callback_data: OrderCallback):
 
         await callback.message.edit_text(f"Вы открыли спор по заказу №{callback_data.order_id}. Администратор скоро свяжется с вами.")
         
-        # Уведомляем администратора с кнопкой
         log_keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="📜 Получить лог чата", callback_data=OrderCallback(action="get_log", order_id=order.id).pack())
         ]])
@@ -1289,9 +1213,6 @@ async def open_dispute(callback: CallbackQuery, callback_data: OrderCallback):
                                                          "Ожидайте решения администратора.")
         except Exception as e:
             logging.error(f"Не удалось отправить уведомления о споре по заказу {order.id}: {e}")
-
-
-# --- НОВЫЕ КОМАНДЫ ДЛЯ АДМИНИСТРАТОРА ---
 
 @dp.message(Command("set_commission"))
 @admin_only
@@ -1306,7 +1227,6 @@ async def set_commission(message: types.Message, command: CommandObject):
         return await message.answer("Ошибка. Введите число от 0 до 100.")
 
     async with async_session() as session:
-        # Ищем настройку, или создаем новую
         commission_setting = await session.get(Setting, "commission_percent")
         if not commission_setting:
             commission_setting = Setting(key="commission_percent", value=str(percent))
@@ -1320,8 +1240,6 @@ async def set_commission(message: types.Message, command: CommandObject):
 @dp.message(Command("dispute_info"))
 @admin_only
 async def get_dispute_info(message: types.Message, command: CommandObject):
-    # Теперь эта команда показывает только краткую информацию
-    # ... (код без изменений)
     if not command.args:
         return await message.answer("Пожалуйста, укажите ID заказа. Пример: /dispute_info 123")
     try:
@@ -1339,7 +1257,6 @@ async def get_dispute_info(message: types.Message, command: CommandObject):
                      f"Чтобы решить спор, используйте /resolve {order.id} customer|executor")
         await message.answer(info_text)
 
-# НОВЫЙ ОБРАБОТЧИК ДЛЯ КНОПКИ "ПОЛУЧИТЬ ЛОГ"
 @dp.callback_query(OrderCallback.filter(F.action == "get_log"))
 async def get_chat_log_handler(callback: CallbackQuery, callback_data: OrderCallback):
     if callback.from_user.id != ADMIN_ID:
@@ -1352,10 +1269,8 @@ async def get_chat_log_handler(callback: CallbackQuery, callback_data: OrderCall
         order = await session.get(Order, order_id, options=[joinedload(Order.customer), joinedload(Order.executor)])
         await bot.send_message(LOG_CHANNEL_ID, f"--- Лог чата для заказа №{order_id}: {order.title} ---")
         
-        # === ИСПРАВЛЕНИЕ: Сразу получаем все сообщения в список ===
         chat_log_result = await session.scalars(select(ChatMessage).where(ChatMessage.order_id == order_id).order_by(ChatMessage.timestamp))
         chat_log = chat_log_result.all()
-        # =======================================================
         
         if not chat_log:
              await bot.send_message(LOG_CHANNEL_ID, "Лог чата пуст.")
@@ -1376,17 +1291,13 @@ async def get_chat_log_handler(callback: CallbackQuery, callback_data: OrderCall
 
     await callback.message.answer(f"✅ Лог чата для заказа №{order_id} отправлен в канал.")
 
-
-
 @dp.message(Command("resolve"))
 @admin_only
 async def resolve_dispute(message: types.Message, command: CommandObject):
     args = (command.args or "").split()
-    # === ИСПРАВЛЕНИЕ: МЕНЯЕМ ТЕКСТ ОШИБКИ ===
     if len(args) != 2:
         return await message.answer("Неверный формат. Используйте: /resolve `id_заказа` `winner`\n"
                                     "Где `winner` - 'customer' или 'executor'.")
-    
     try:
         order_id = int(args[0])
         winner = args[1].lower()
@@ -1409,7 +1320,7 @@ async def resolve_dispute(message: types.Message, command: CommandObject):
             winner_user = order.customer
             loser_user = order.executor
             resolution_text = f"Спор по заказу №{order.id} решен в пользу заказчика. Сумма {order.price:.2f} USDT возвращена на его баланс."
-        else: # winner == "executor"
+        else:
             if order.price > 0: order.executor.balance += order.price
             session.add(FinancialTransaction(user_id=order.executor_id, type='dispute_resolution', amount=order.price, order_id=order.id))
             
@@ -1431,8 +1342,7 @@ async def resolve_dispute(message: types.Message, command: CommandObject):
 @dp.message(F.document)
 @block_check
 async def handle_document_rejection(message: types.Message, state: FSMContext):
-    # Проверяем, находится ли пользователь в активном чате
-    if await state.get_state() is not None: return # Игнорируем, если пользователь в FSM
+    if await state.get_state() is not None: return
     user_id = message.from_user.id
     async with async_session() as session:
         active_order = await session.scalar(
@@ -1441,8 +1351,6 @@ async def handle_document_rejection(message: types.Message, state: FSMContext):
         if active_order:
             await message.reply("❌ Файлы должны отправляться только через файлообменник. В этом чате разрешено отправлять только ссылки.")
 
-
-# --- ОБРАБОТЧИК ДЛЯ ЧАТА (ДОЛЖЕН БЫТЬ В САМОМ КОНЦЕ!) ---
 @dp.message(F.text | F.photo | F.voice)
 @block_check
 async def handle_chat_messages(message: types.Message, state: FSMContext):
@@ -1467,7 +1375,6 @@ async def handle_chat_messages(message: types.Message, state: FSMContext):
         content_type = message.content_type.value
         text_content, file_path_to_save = None, None
         
-        # --- НОВАЯ ЛОГИКА СКАЧИВАНИЯ ---
         if message.text:
             text_content = message.text
         elif message.photo:
@@ -1483,8 +1390,6 @@ async def handle_chat_messages(message: types.Message, state: FSMContext):
             file_ext = file_info.file_path.split('.')[-1]
             file_path_to_save = f"media/{file_info.file_unique_id}.{file_ext}"
             await bot.download_file(file_info.file_path, file_path_to_save)
-        # --------------------------------
-
         session.add(ChatMessage(order_id=active_order.id, sender_id=user_id, content_type=content_type, text_content=text_content, file_path=file_path_to_save))
         await session.commit()
         
@@ -1499,7 +1404,6 @@ async def handle_chat_messages(message: types.Message, state: FSMContext):
             logging.error(f"Не удалось переслать сообщение от {user_id} к {recipient_id}: {e}")
             await message.answer("❌ Не удалось доставить сообщение.")
 
-# --- Основная функция для запуска ---
 async def main():
     if not all([ADMIN_ID, LOG_CHANNEL_ID, ORDER_CHANNEL_ID]):
         logging.critical("Один или несколько обязательных ID (ADMIN_ID, LOG_CHANNEL_ID, ORDER_CHANNEL_ID) не указаны в .env файле!")
@@ -1509,8 +1413,6 @@ async def main():
     scheduler = AsyncIOScheduler(timezone="Etc/GMT")
     scheduler.add_job(check_payments, 'interval', minutes=2)
     scheduler.start()
-    
-    # Удаляем старые вебхуки и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
     

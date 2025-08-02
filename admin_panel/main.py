@@ -16,13 +16,11 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from fastapi.staticfiles import StaticFiles
 
-
 load_dotenv()
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from db_models import User, Order, FinancialTransaction, ChatMessage, Setting, Category
 
-# --- Настройка ---
 DB_URL = f"postgresql+asyncpg://{os.getenv('DB_USER')}:{os.getenv('DB_PASS')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 engine = create_async_engine(DB_URL)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -32,7 +30,6 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 templates = Jinja2Templates(directory="admin_panel/templates")
 bot = Bot(token=os.getenv("BOT_TOKEN"), default=DefaultBotProperties(parse_mode="HTML"))
 
-# --- Безопасность ---
 security = HTTPBasic()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
@@ -49,24 +46,19 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
-# --- Страницы и действия (API) ---
-
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def read_root(request: Request):
     async with async_session() as session:
-        # Получаем пользователей и заказы
         users_result = await session.execute(select(User).order_by(User.registration_date.desc()))
         users = users_result.scalars().all()
         orders_result = await session.execute(
             select(Order).options(
                 joinedload(Order.customer), 
                 joinedload(Order.executor),
-                joinedload(Order.category) # <--- ДОБАВЛЕНО
+                joinedload(Order.category)
             ).order_by(Order.creation_date.desc())
         )
         orders = orders_result.scalars().unique().all()
-        
-        # === ИЗМЕНЕНИЕ: Получаем текущую комиссию ===
         commission_setting = await session.get(Setting, "commission_percent")
         current_commission = commission_setting.value if commission_setting else "0"
         categories_result = await session.execute(select(Category).order_by(Category.name))
@@ -105,7 +97,6 @@ async def delete_category(category_id: int):
 @app.post("/settings/commission", dependencies=[Depends(verify_credentials)])
 async def update_commission(percent: Decimal = Form(...)):
     if not (0 <= percent <= 100):
-        # В реальном приложении здесь лучше показывать ошибку, а не просто редиректить
         return RedirectResponse(url="/", status_code=303)
 
     async with async_session() as session:

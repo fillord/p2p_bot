@@ -27,7 +27,6 @@ class User(Base):
     registration_date = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(UTC))
     is_blocked = Column(Boolean, default=False, nullable=False)
     vip_expires_at = Column(DateTime(timezone=True), nullable=True)
-
     created_orders = relationship("Order", foreign_keys="Order.customer_id", back_populates="customer")
     executed_orders = relationship("Order", foreign_keys="Order.executor_id", back_populates="executor")
     offers = relationship("Offer", back_populates="executor")
@@ -46,11 +45,8 @@ class Order(Base):
     customer_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     executor_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=True)
     creation_date = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(UTC))
-    
-    # ИЗМЕНЕНИЕ: Добавляем связь с категорией
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     category = relationship("Category", back_populates="orders")
-    
     customer = relationship("User", foreign_keys=[customer_id], back_populates="created_orders")
     executor = relationship("User", foreign_keys=[executor_id], back_populates="executed_orders")
     offers = relationship("Offer", back_populates="order", cascade="all, delete-orphan")
@@ -97,6 +93,7 @@ class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True)
     txid = Column(String(128), unique=True, nullable=False, index=True)
+
 
 class Setting(Base):
     __tablename__ = "settings"

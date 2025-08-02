@@ -11,7 +11,6 @@ class MakeOffer(StatesGroup):
     enter_message = State()
     confirm_offer = State()
     
-# Новое состояние для отзыва
 class LeaveReview(StatesGroup):
     enter_rating = State()
     enter_text = State()
